@@ -1,6 +1,19 @@
 import Git from 'nodegit';
+import config from '../config.json';
+import fs from 'fs';
 
-const clone = (url, dir) => {
+/**
+ * Looks in the directory to check if repository exists. If not, clones it into the directory
+ * @param  {string} url
+ * @param  {string} dir
+ * @return {Repository}
+ */
+const retrieveRepo = (url, dir) => {
+
+	if (fs.existsSync(dir)){
+		return Git.Repository.open(dir);
+	}
+
 	console.log(`Cloning ${url} into ${dir}`);
 	return Git.Clone(url, dir, {
 		fetchOpts: {
@@ -14,51 +27,45 @@ const clone = (url, dir) => {
 	});
 }
 
-const getMasterCommit = repo => {
-	return repo.getMasterCommit();
-}
-
-const resetUAT = (repo, head) => {
-	console.log("Resetting UAT to head of Master");
+/**
+ * Sets the HEAD of the branch to a commit
+ * @param  {Repository} repo
+ * @param  {Commit} head
+ * @return {Promise}
+ */
+const resetStageToCommit = (repo, branch, head) => {
+	console.log(`Resetting ${branch} to ${head.id()}`);
 	return new Promise((resolve, reject) => {
-		return repo.checkoutBranch('uat')
-			.then(() => {
-				Git.Reset.reset(repo, head, Git.Reset.TYPE.HARD)
-				.then(resolve)
-				.catch(reject)
-			})
+		repo.checkoutBranch(branch).then(() => Git.Reset.reset(repo, head, Git.Reset.TYPE.HARD))
+			.then(resolve)
 			.catch(reject);
 	});
 }
 
-const checkoutBranch = (repo, branchName) => {
-	return repo.checkoutBranch(branchName);
-}
-
+/**
+ * Gets all the branches on a remote
+ * @param  {Remote} remote
+ * @return {Promise}
+ */
 const getAllBranches = remote => {
 	return new Promise((resolve, reject) => {
 		remote.connect(Git.Enums.DIRECTION.FETCH, {
 			certificateCheck: () => 1,
-			credentials: function(url, userName){
-				return Git.Cred.sshKeyFromAgent(userName);
-			}
-		}).then(status => {
-				remote.referenceList()
-					.then((refs) => {
-						remote.disconnect()
-							.then(resolve(refs))
-							.catch(reject);
-						})
-					.catch(reject);
-				})
+			credentials: (url, userName) => Git.Cred.sshKeyFromAgent(userName)
+		}).then(status => remote.referenceList())
+			.then(resolve)
 			.catch(reject);
 	});
 }
 
-const pushUAT = origin => {
-	console.log("Time to push");
+/**
+ * Pushes the UAT branch to the remote
+ * @param  {Remote} origin
+ * @return {Promise}
+ */
+const pushBranch = (origin, branch) => {
 	return new Promise((resolve, reject) => {
-		origin.push(["refs/heads/uat:refs/heads/uat"], { 
+		origin.push([`+refs/heads/${branch}:refs/heads/${branch}`], { 
 				callbacks: {
 					certificateCheck: () => 1,
 					credentials: function(url, userName){  
@@ -71,64 +78,93 @@ const pushUAT = origin => {
 	});
 }
 
-const createBranch = (repo, branchName, commit) => {
-	console.log(`Creating ${branchName} and setting upstream to remote`);
+/**
+ * Creates a branch locally with same name as remote branch, resets local branch to HEAD of the remote branch, and tracks remote branch
+ * @param  {Repository} repo       
+ * @param  {Array[RemoteHead]} remoteHeads
+ * @return {Promise}
+ */
+const fetchRemoteBranches = (repo, remoteHeads) => {
 	return new Promise((resolve, reject) => {
-		repo.createBranch(branchName, commit)
-			.then(ref => {
-				Git.Branch.setUpstream(ref, `origin/${branchName}`)
-					.then(resolve)
-					.catch(reject);
-			})
-			.catch(reject);
+		let promise = Promise.resolve();
+		for (const head of remoteHeads){
+			promise = promise.then(() => repo.createBranch(getBranchName(head), head.oid()))
+				.then(ref => Git.Branch.setUpstream(ref, `origin/${getBranchName(head)}`));
+		}
+		promise.then(resolve).catch(reject);
 	});
-	return repo.createBranch(branchName, commit);
+};
+
+/**
+ * Creates a branch and sets its tracking branch as the same name on the remote
+ * @param  {Repository} repo     
+ * @param  {Array} branches 
+ * @param  {Commit} commit   
+ * @return {Promise}
+ */
+const createBranches = (repo, branches, commit) => {
+	return new Promise((resolve, reject) => {
+		let promise = Promise.resolve();
+		for (const branch of branches){
+			console.log(`Creating ${branch}`);
+			promise = promise.then(() => repo.createBranch(branch, commit))
+				.then(ref => Git.Branch.setUpstream(ref, `origin/${branch}`));
+		}
+		promise.then(resolve).catch(reject);
+	});
 }
 
-const mergeBranches = (repo, branches, destination, isFastForward = true) => {
-	console.log(`Merging ${branches} into ${destination}`);
-	const mergePreference = isFastForward ? Git.Merge.PREFERENCE.FASTFORWARD_ONLY : Git.Merge.PREFERENCE.NO_FASTFORWARD;
+/**
+ * Merges branches based ona merge preference
+ * @param  {Repository} repo            
+ * @param  {Array} branches        
+ * @param  {Array} destination     
+ * @param  {Git.Merge.PREFERENCE} mergePreference
+ * @return {Promise}                 
+ */
+const mergeBranches = (repo, branches, destination, mergePreference = Git.Merge.PREFERENCE.FASTFORWARD_ONLY) => {
 	return new Promise((resolve, reject) => {
-		repo.mergeBranches(destination, branches, null, mergePreference)
-			.then(oid => {
-				console.log("Success");
-				console.log(oid);
-				resolve();
-			})
-			.catch(error => {
-				console.log(error);
-				reject(error);
-			})
+		let promise = Promise.resolve();
+		let index = 0;
+		for (const branch of branches){
+			console.log(`Merging ${destination[index]} into ${branch}`);
+			((to, from) => {
+				promise = promise.then(() => repo.mergeBranches(to, from, null, mergePreference));
+			})(branch, destination[index])
+			index += 1;
+		}
+
+		promise.then(resolve('success')).catch(reject);
 	});
+}
+
+/**
+ * Parses the branch name of a refspec
+ * @param  {RemoteHead} ref 
+ * @return {string}
+ */
+const getBranchName = ref => {
+	const components = ref.name().split('/');
+	return components[components.length - 1];
 }
 
 async function resetAndMerge(){
+	const repo = await retrieveRepo(config.ssh, config.path);
+	const remote = await repo.getRemote(config.remote);
+	const masterCommit = await repo.getMasterCommit();
 
-	const repo = await clone('git@github.com:jhamet93/MinimalUATCodeDrift.git', './tmp');
-	const origin = await repo.getRemote('origin');
-	const masterCommit = await getMasterCommit(repo);
-	const allRefs = await getAllBranches(origin);
-	const nonMasterRefs = allRefs.filter(ref => ['HEAD', 'refs/heads/master'].indexOf(ref.name()) === -1);
+	const allRefs = await getAllBranches(remote);
+	const nonMasterRefs = allRefs.filter(ref => ['HEAD', `refs/heads/${config.main}`].indexOf(ref.name()) === -1);
+	const remoteBranches = await fetchRemoteBranches(repo, nonMasterRefs);
+	const reset = await resetStageToCommit(repo, config.staging, masterCommit);
 
-	let promise = Promise.resolve();
-	for (const ref of nonMasterRefs){
-		const components = ref.name().split('/');
-		const branchName = components[components.length - 1];
-		promise = promise.then(() => createBranch(repo, branchName, masterCommit));
-		promise = promise.then(() => mergeBranches(repo, `origin/${branchName}`, branchName));
-	}
-
-	promise = promise.then(() => resetUAT(repo, masterCommit))
-
-	const featureRefs = nonMasterRefs.filter(ref => ['refs/heads/uat'].indexOf(ref.name()) === -1);
-	for (const ref of featureRefs){
-		const components = ref.name().split('/');	
-		const branchName = components[components.length - 1];
-		promise = promise.then(() => mergeBranches(repo, branchName, 'uat', false))
-	}
-
-	//promise.then(() => pushUAT(origin));
-
+	const featureRefs = allRefs.filter(ref => ['HEAD', `refs/heads/${config.main}`, `refs/heads/${config.staging}`].indexOf(ref.name()) === -1).map(ref => getBranchName(ref)); 
+	const mergeFeatures = await mergeBranches(repo, new Array(featureRefs.length).fill(config.staging), featureRefs, Git.Merge.PREFERENCE.NO_FASTFORWARD);
+	const push = await pushBranch(remote, config.staging);
 }
 
-resetAndMerge();
+resetAndMerge().then(() => {
+	console.log("Success!")
+}).catch(error => {
+	console.log(`Error: ${error}`);
+});

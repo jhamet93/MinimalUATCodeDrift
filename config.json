@@ -1,0 +1,7 @@
+{
+	"main": "master",
+	"staging": "uat",
+	"remote": "origin",
+	"ssh": "git@github.com:jhamet93/MinimalUATCodeDrift.git",
+	"path": "./tmp/MinimalUATCodeDrift"
+}

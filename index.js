@@ -47,23 +47,27 @@ const resetStageToCommit = (repo, branch, head) => {
  * @param  {Remote} remote
  * @return {Promise}
  */
-const getAllBranches = remote => {
+const getAllBranches = (remote, blacklist) => {
+	console.log(`Get all branches on ${remote.name()} except ${blacklist}`);
 	return new Promise((resolve, reject) => {
 		remote.connect(Git.Enums.DIRECTION.FETCH, {
 			certificateCheck: () => 1,
 			credentials: (url, userName) => Git.Cred.sshKeyFromAgent(userName)
 		}).then(status => remote.referenceList())
-			.then(resolve)
+			.then(refs => {
+				resolve(refs.filter(ref => blacklist.indexOf(getBranchName(ref)) === -1));	
+			})
 			.catch(reject);
 	});
 }
 
 /**
- * Pushes the UAT branch to the remote
+ * Pushes a branch to the remote
  * @param  {Remote} origin
  * @return {Promise}
  */
 const pushBranch = (origin, branch) => {
+	console.log(`Pushing changes to ${origin}/${branch}`);
 	return new Promise((resolve, reject) => {
 		origin.push([`+refs/heads/${branch}:refs/heads/${branch}`], { 
 				callbacks: {
@@ -153,7 +157,7 @@ async function resetAndMerge(){
 	const remote = await repo.getRemote(config.remote);
 	const masterCommit = await repo.getMasterCommit();
 
-	const allRefs = await getAllBranches(remote);
+	const allRefs = await getAllBranches(remote, config.blacklist);
 	const nonMasterRefs = allRefs.filter(ref => ['HEAD', `refs/heads/${config.main}`].indexOf(ref.name()) === -1);
 	const remoteBranches = await fetchRemoteBranches(repo, nonMasterRefs);
 	const reset = await resetStageToCommit(repo, config.staging, masterCommit);

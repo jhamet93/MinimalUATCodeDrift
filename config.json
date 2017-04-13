@@ -2,6 +2,7 @@
 	"main": "master",
 	"staging": "uat",
 	"remote": "origin",
+	"blacklist": ["TestMerge"],
 	"ssh": "git@github.com:jhamet93/MinimalUATCodeDrift.git",
-	"path": "./tmp/MinimalUATCodeDrift"
+	"path": "./tmp"
 }

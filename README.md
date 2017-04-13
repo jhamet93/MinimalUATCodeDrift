@@ -15,3 +15,15 @@ This strategy allowed our QA support to easily test changes in a shared environm
 ## Implementation
 
 This script reads a simple configuration that details the names of your production and staging branches as well as some other basic information. Everytime this script is executed, it resets the staging branch to the head of the master branch, and then merges in each feature branch resulting in a max of one merge commit per feature. If a feature never makes it to production, delete the branch and it will not be merged into staging on the next execution of the script. The aim is for this script to be executed everytime a push is made to the staging branch. This results in less code drift between the two branches and the easy elimination of dead features.
+
+```
+config.json
+{
+  "main": "master",
+  "staging": "uat",
+  "remote": "origin",
+  "blacklist": [],
+  "ssh": "git@github.com:jhamet93/MinimalUATCodeDrift.git",
+  "path": "./tmp"
+}
+```

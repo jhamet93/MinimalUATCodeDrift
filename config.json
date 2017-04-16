@@ -1,6 +1,6 @@
 {
 	"main": "master",
-	"staging": "uat",
+	"staging": "staging",
 	"remote": "origin",
 	"blacklist": ["TestMerge"],
 	"ssh": "git@github.com:jhamet93/MinimalUATCodeDrift.git",
